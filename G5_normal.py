@@ -210,12 +210,21 @@ def save_to_excel(all_articles, output_file='combined_articles_G5_normal.xlsx'):
 # ============================================================
 
 class IFRIScraper:
+    MAX_PAGES = 30  # 翻頁上限，避免網站改版時無限翻頁
+
     def __init__(self):
         self.driver = None
         self.base_url = "https://www.ifri.org/en/research/search-publications"
-        self.url_params = "field_date_de_publication%5Bmin%5D=1936&field_date_de_publication%5Bmax%5D=2026&field_type_publication%5B9007%5D=9007&field_type_publication%5B4%5D=4&field_type_publication%5B21%5D=21&field_type_publication%5B2356%5D=2356&field_type_publication%5B2412%5D=2412&field_type_publication%5B4425%5D=4425"
+        self.url_params = (
+            "field_date_de_publication%5Bmin%5D=1936"
+            f"&field_date_de_publication%5Bmax%5D={datetime.today().year}"
+            "&field_type_publication%5B9007%5D=9007&field_type_publication%5B4%5D=4"
+            "&field_type_publication%5B21%5D=21&field_type_publication%5B2356%5D=2356"
+            "&field_type_publication%5B2412%5D=2412&field_type_publication%5B4425%5D=4425"
+        )
         self.articles_data = []
         self.keywords = ['China', 'Taiwan', 'Taipei']
+        self.early_count = 0  # 連續早於起始日期的篇數（跨頁累計）
 
     def parse_article_date(self, date_text):
         try:
@@ -278,6 +287,7 @@ class IFRIScraper:
             return None
 
     def scrape_page(self, page_num, start_dt, end_dt):
+        """回傳 True 表示繼續下一頁，False 表示停止"""
         url = f"{self.base_url}?{self.url_params}&page={page_num}"
         print(f"\n正在爬取第 {page_num + 1} 頁...")
         try:
@@ -285,7 +295,8 @@ class IFRIScraper:
             time.sleep(3)
             articles = self.driver.find_elements(By.CSS_SELECTOR, 'div.views-row')
             if not articles:
-                return True, 0
+                print("  ⚠ 找不到文章，停止爬取")
+                return False
 
             article_info_list = []
             for article in articles:
@@ -320,19 +331,26 @@ class IFRIScraper:
                     continue
                 article_info_list.append({'url': article_url, 'date': article_date})
 
-            early_count = 0
+            if not article_info_list:
+                print(f"  ⚠ 頁面有 {len(articles)} 筆資料，但都讀不到日期或連結，網站可能已改版，停止爬取")
+                return False
+
             for info in article_info_list:
                 article_date = info['date']
                 article_url = info['url']
+                print(f"  文章日期 {article_date.strftime('%Y/%m/%d')}", end="")
                 if article_date < start_dt:
-                    early_count += 1
-                    if early_count >= 3:
-                        return False, early_count
+                    self.early_count += 1
+                    print(f" → 早於起始日期（連續 {self.early_count}/3）")
+                    if self.early_count >= 3:
+                        return False
                     continue
                 if article_date > end_dt:
-                    early_count = 0
+                    self.early_count = 0
+                    print(" → 晚於結束日期，略過")
                     continue
-                early_count = 0
+                self.early_count = 0
+                print(" → 在區間內，檢查內容")
                 article_data = self.scrape_article_details(article_url, article_date)
                 if article_data:
                     self.articles_data.append(article_data)
@@ -340,10 +358,10 @@ class IFRIScraper:
                 self.driver.get(url)
                 time.sleep(2)
 
-            return True, early_count
+            return True
         except Exception as e:
-            print(f"❌ 頁面錯誤: {e}")
-            return True, 0
+            print(f"❌ 頁面錯誤，停止爬取: {e}")
+            return False
 
     def run(self, start_dt, end_dt):
         print("\n" + "=" * 60)
@@ -351,18 +369,18 @@ class IFRIScraper:
         print("=" * 60)
         self.driver = make_driver()
         try:
-            page_num = 0
-            while True:
-                should_continue, _ = self.scrape_page(page_num, start_dt, end_dt)
-                if not should_continue:
+            for page_num in range(self.MAX_PAGES):
+                if not self.scrape_page(page_num, start_dt, end_dt):
                     break
-                page_num += 1
                 time.sleep(1)
+            else:
+                print(f"\n⚠ 已達翻頁上限 {self.MAX_PAGES} 頁，強制停止（請檢查網站是否改版）")
         except Exception as e:
             print(f"\n❌ 錯誤: {e}")
         finally:
             if self.driver:
                 self.driver.quit()
+        print(f"\nIFRI 共收錄 {len(self.articles_data)} 篇")
         return self.articles_data
 
 
