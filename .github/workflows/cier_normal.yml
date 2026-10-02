@@ -13,7 +13,10 @@ on:
     - cron: '0 21 20 * *'
 
   workflow_dispatch:   # 可手動觸發（測試用）
-
+  
+env:
+  TZ: Asia/Taipei
+  
 jobs:
   scrape-g1:
     name: G1 爬蟲
