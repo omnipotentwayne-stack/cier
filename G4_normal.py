@@ -221,12 +221,19 @@ class GatewayHouseScraper:
 
             article_date = None
             date_text    = ""
+            month_pat = (r'\d{1,2}\s+(?:January|February|March|April|May|June|July|'
+                         r'August|September|October|November|December)\s+\d{4}')
 
-            all_dates = re.findall(
-                r'(\d{1,2}\s+(?:January|February|March|April|May|June|July|'
-                r'August|September|October|November|December)\s+\d{4})',
-                page_source)
-            for date_str in all_dates:
+            # 優先抓署名行的日期，例如「23 May 2014, Gateway House」
+            # （頁首會顯示今天日期，不能直接取第一個）
+            candidates = re.findall(rf'({month_pat}),\s*Gateway House', page_source)
+            # 找不到署名行時，改抓標題 <h1> 之前、最接近標題的日期
+            if not candidates:
+                h1_pos = page_source.find("<h1")
+                if h1_pos != -1:
+                    candidates = list(reversed(re.findall(rf'({month_pat})', page_source[:h1_pos])))
+
+            for date_str in candidates:
                 temp_date = self.parse_article_date(date_str)
                 if temp_date:
                     date_text    = date_str
@@ -282,7 +289,7 @@ class GatewayHouseScraper:
         print(f"\n正在爬取: {url}")
         print("-" * 60)
 
-        while True:
+        while page_num <= 30:  # 翻頁上限，避免無限翻頁
             try:
                 current_url = url if page_num == 1 else f"{url}page/{page_num}/"
                 self.driver.get(current_url)
@@ -306,7 +313,7 @@ class GatewayHouseScraper:
                     except:
                         continue
 
-                article_links = list(set(article_links))
+                article_links = list(dict.fromkeys(article_links))  # 去重但保留原本順序
                 if not article_links:
                     break
 
